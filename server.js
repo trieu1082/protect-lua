@@ -38,7 +38,7 @@ app.post("/api/create",(req,res)=>{
 
   fs.writeFileSync(path.join(db,`${id}.json`),JSON.stringify({enc,key}))
 
-  res.json({link:`https://your-render-url/${id}`})
+  res.json({link:`https://protect-lua.onrender.com/${id}`})
 })
 
 app.get("/api/token/:id",(req,res)=>{
@@ -103,7 +103,7 @@ app.get("/:id",(req,res)=>{
   let id = req.params.id
 
   let loader = `
-local b="https://your-render-url"
+local b="https://protect-lua.onrender.com"
 local t=game:HttpGet(b.."/api/token/${id}")
 local s=game:HttpGet(b.."/api/load/${id}?t="..t)
 loadstring(s)()
