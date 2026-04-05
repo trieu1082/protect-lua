@@ -2,45 +2,29 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Obf Tool</title>
-<style>
-body{background:#0f0f0f;color:#fff;font-family:sans-serif;padding:20px}
-.box{max-width:700px;margin:auto}
-textarea,input,button{width:100%;margin:6px 0;padding:10px;background:#1a1a1a;color:#fff;border:none;border-radius:6px}
-button{cursor:pointer;background:#2a2a2a}
-#out{margin-top:10px;word-break:break-all}
-</style>
+<title>Loader</title>
+<script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body>
+<body class="bg-black text-white p-6">
 
-<div class="box">
-<input id="name" placeholder="Tên script (optional)">
-<textarea id="code" rows="12" placeholder="Nhập Lua..."></textarea>
-<button onclick="go()">Obfuscate</button>
-<div id="out"></div>
-</div>
+<h1 class="text-2xl mb-4">UPLOAD SCRIPT</h1>
+
+<textarea id="code" class="w-full h-40 bg-gray-900 p-2"></textarea>
+
+<button onclick="up()" class="bg-green-600 px-4 py-2 mt-2">UPLOAD</button>
+
+<pre id="out" class="mt-4 text-green-400"></pre>
 
 <script>
-async function go(){
-  let code = document.getElementById("code").value.trim()
-  let name = document.getElementById("name").value.trim()
-
-  if(!code) return alert("Nhập code đi")
-
-  try{
-    let r = await fetch("/api/create",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({code,name})
-    })
-
-    let j = await r.json()
-
-    document.getElementById("out").innerHTML =
-      `Link:<br><a href="${j.link}" target="_blank">${j.link}</a>`
-  }catch(e){
-    document.getElementById("out").innerText = "Lỗi server"
-  }
+async function up(){
+  let c=document.getElementById('code').value
+  let r=await fetch('/upload',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({content:c})
+  })
+  let d=await r.json()
+  document.getElementById('out').innerText=d.loader
 }
 </script>
 
