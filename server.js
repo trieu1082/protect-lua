@@ -1,116 +1,163 @@
-import express from "express"
-import fs from "fs"
-import path from "path"
+const express = require('express')
+const crypto = require('crypto')
+const fs = require('fs-extra')
+const path = require('path')
+const rateLimit = require('express-rate-limit')
+const pako = require('pako')
+require('dotenv').config()
 
 const app = express()
+const PORT = process.env.PORT || 3000
+const KEY = Buffer.from(process.env.SECRET_KEY || crypto.randomBytes(32).toString('hex'), 'hex')
+
 app.use(express.json())
 
-const db = path.join(process.cwd(),"db")
-if(!fs.existsSync(db)) fs.mkdirSync(db)
+const DIR = path.join(__dirname, 'scripts')
+fs.ensureDirSync(DIR)
 
-app.get("/",(req,res)=>{
-  res.sendFile(path.join(process.cwd(),"index.html"))
-})
+const TOKENS = new Map()
+const IV = 16
 
-let tokens = {}
-
-function r(l=6){
-  return [...Array(l)].map(()=> "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"[Math.floor(Math.random()*62)]).join("")
+// ===== AES =====
+const enc = (t)=>{
+  const iv = crypto.randomBytes(IV)
+  const c = crypto.createCipheriv('aes-256-cbc', KEY, iv)
+  let e = c.update(t,'utf8','hex')
+  e += c.final('hex')
+  return iv.toString('hex')+':'+e
 }
 
-function xor(s,k){
-  return Buffer.from([...s].map((c,i)=>c.charCodeAt(0)^k.charCodeAt(i%k.length))).toString("base64")
+const dec = (d)=>{
+  const [ivh,data]=d.split(':')
+  const iv = Buffer.from(ivh,'hex')
+  const dc = crypto.createDecipheriv('aes-256-cbc', KEY, iv)
+  let r = dc.update(data,'hex','utf8')
+  r += dc.final('utf8')
+  return r
 }
 
-function obf(code){
-  let key = r(8)
-  return {enc:xor(code,key),key}
+// ===== EMOJI ENCODE =====
+const EMOJI = ['🤡','🤢','🤮','🤬','🤫','😈','👻','💀','👽','👾']
+
+const toEmoji = (t)=>t.split('').map(c=>{
+  let code=c.charCodeAt(0)
+  return EMOJI[code%EMOJI.length]+code.toString(16)
+}).join(' ')
+
+const fromEmoji = (t)=>t.split(' ').map(x=>{
+  let hex=x.slice(2)
+  return String.fromCharCode(parseInt(hex,16))
+}).join('')
+
+// ===== PACK =====
+const pack = (s)=>{
+  let c = Buffer.from(pako.deflate(s)).toString('base64')
+  let e = enc(c)
+  return toEmoji(e)
 }
 
-app.post("/api/create",(req,res)=>{
-  let {code,name} = req.body
-  if(!code) return res.sendStatus(400)
+const unpack = (e)=>{
+  let raw = fromEmoji(e)
+  let d = dec(raw)
+  return pako.inflate(Buffer.from(d,'base64'),{to:'string'})
+}
 
-  if(!name || name.length<3) name = r()
+// ===== HASH =====
+const hash = (t)=>crypto.createHmac('sha256',KEY).update(t).digest('hex')
 
-  let id = r(10)
-  let {enc,key} = obf(code)
+// ===== FILTER =====
+const badUA = (ua='')=>{
+  ua=ua.toLowerCase()
+  return ['curl','wget','python','postman','insomnia','httpclient'].some(x=>ua.includes(x))
+}
 
-  fs.writeFileSync(path.join(db,`${id}.json`),JSON.stringify({enc,key}))
+const limiter = rateLimit({windowMs:10000,max:20})
 
-  res.json({link:`https://protect-lua.onrender.com/${id}`})
-})
+// ===== UPLOAD =====
+app.post('/upload',limiter,(req,res)=>{
+  let c=req.body.content
+  if(!c) return res.status(400).json({error:'no content'})
 
-app.get("/api/token/:id",(req,res)=>{
-  let id = req.params.id
-  let file = path.join(db,`${id}.json`)
-  if(!fs.existsSync(file)) return res.send("404")
+  const id=crypto.randomBytes(8).toString('hex')
+  fs.writeFileSync(path.join(DIR,id+'.enc'),pack(c))
 
-  let t = r(20)
-  tokens[t] = {
+  res.json({
     id,
-    ip: req.headers["x-forwarded-for"] || req.socket.remoteAddress,
-    exp: Date.now()+5000
+    loader:`loadstring(game:HttpGet("${req.protocol}://${req.get('host')}/token/${id}"))()`
+  })
+})
+
+// ===== TOKEN =====
+app.get('/token/:id',(req,res)=>{
+  if(badUA(req.headers['user-agent'])) return res.status(403).send('denied')
+
+  const id=req.params.id
+  const t=crypto.randomBytes(12).toString('hex')
+  const ts=Date.now()
+
+  TOKENS.set(t,{id,time:ts})
+
+  const sig=hash(t+ts)
+
+  res.send(`
+return (function()
+  local t="${t}"
+  local ts="${ts}"
+  local sig="${sig}"
+  local url="${req.protocol}://${req.get('host')}/load/${id}?t="..t.."&ts="..ts.."&sig="..sig
+  return game:HttpGet(url)
+end)()
+`)
+})
+
+// ===== LOAD (CHỈ TRẢ EMOJI) =====
+app.get('/load/:id',limiter,(req,res)=>{
+  const {t,ts,sig}=req.query
+  const data=TOKENS.get(t)
+
+  if(!data) return res.status(403).send('bad token')
+
+  if(Date.now()-data.time>10000){
+    TOKENS.delete(t)
+    return res.status(403).send('expired')
   }
 
-  res.send(t)
-})
+  if(sig!==hash(t+ts)) return res.status(403).send('invalid')
 
-app.get("/api/load/:id",(req,res)=>{
-  let t = req.query.t
-  let data = tokens[t]
+  TOKENS.delete(t)
 
-  if(!data) return res.send("blocked")
-  if(data.exp < Date.now()) return res.send("blocked")
+  const file=path.join(DIR,req.params.id+'.enc')
+  if(!fs.existsSync(file)) return res.status(404).send('not found')
 
-  let ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress
-  if(data.ip !== ip) return res.send("blocked")
+  const payload=fs.readFileSync(file,'utf8')
 
-  delete tokens[t]
+  res.send(`
+-- emoji protected
+local raw = "${payload}"
 
-  let file = path.join(db,`${data.id}.json`)
-  if(!fs.existsSync(file)) return res.send("404")
-
-  let {enc,key} = JSON.parse(fs.readFileSync(file,"utf8"))
-
-  let mid = enc.length>>1
-  let p1 = enc.slice(0,mid)
-  let p2 = enc.slice(mid)
-
-  let payload = `
-local k="${key}"
-local a="${p1}"
-local b="${p2}"
-local d=a..b
-
-local function x(s,k)
-  local b=game:GetService("HttpService"):Base64Decode(s)
-  local r=""
-  for i=1,#b do
-    r=r..string.char(string.byte(b,i)~string.byte(k,((i-1)%#k)+1))
-  end
-  return r
+local function req(u)
+  return game:HttpGet(u)
 end
 
-loadstring(x(d,k))()
-`
+local decoded = req("${req.protocol}://${req.get('host')}/decode?data="..raw)
 
-  res.setHeader("content-type","text/plain")
-  res.send(payload)
+return loadstring(decoded)()
+`)
 })
 
-app.get("/:id",(req,res)=>{
-  let id = req.params.id
+// ===== DECODE API =====
+app.get('/decode',(req,res)=>{
+  try{
+    const data=req.query.data
+    if(!data) return res.status(400).send('no data')
 
-  let loader = `
-local b="https://protect-lua.onrender.com"
-local t=game:HttpGet(b.."/api/token/${id}")
-local s=game:HttpGet(b.."/api/load/${id}?t="..t)
-loadstring(s)()
-`
-
-  res.setHeader("content-type","text/plain")
-  res.send(loader)
+    const result=unpack(data)
+    res.send(result)
+  }catch{
+    res.status(403).send('fail')
+  }
 })
 
-app.listen(process.env.PORT || 3000)
+app.use(express.static('public'))
+
+app.listen(PORT,()=>console.log("running "+PORT))
