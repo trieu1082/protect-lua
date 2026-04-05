@@ -1,12 +1,16 @@
 {
-  "name": "obf-tool",
+  "name": "lua-protect",
   "version": "1.0.0",
   "main": "server.js",
-  "type": "module",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "fs-extra": "^11.2.0",
+    "crypto": "^1.0.1",
+    "dotenv": "^16.4.5",
+    "pako": "^2.1.0",
+    "express-rate-limit": "^7.0.0"
   }
 }
