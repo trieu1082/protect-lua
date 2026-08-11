@@ -1,0 +1,9 @@
+Package: com.trieu.client
+Name: Trieu Client UI
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: Frame UI dep bo goc - Client Made By Trieu - nut dong + notify chuc ban choi vui ve
+Maintainer: Trieu <trieu@local>
+Author: Trieu
+Section: Tweaks
+Depends: mobilesubstrate, firmware (>=13.0)
